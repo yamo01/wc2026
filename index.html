@@ -299,9 +299,10 @@ const FIXTURES = [
 
 const R32_MAP = Object.fromEntries(FIXTURES.filter(f=>f.round==='R32').map(f=>[f.id,f]));
 
-let groupData  = {};
-let scoreMap   = {};   // key: "TeamA|TeamB" (sorted) → {s1,s2,status,clock,team1,team2}
-let matchResults = {}; // matchId → {winner:{name,flag}, loser:{name,flag}}
+let groupData    = {};
+let scoreMap     = {};   // key: "TeamA|TeamB" (sorted) → {s1,s2,status,clock,team1,team2}
+let matchResults = {};   // matchId → {winner:{name,flag}, loser:{name,flag}}
+let allEvents    = {};   // cestDate → [{team1,team2,flag1,flag2,s1,s2,status,clock,cestTime,venue,round}]
 
 /* ── Utilities ── */
 function getCESTDate() {
@@ -362,10 +363,26 @@ async function fetchScoresForDate(dateStr) {
       const status = comp.status?.type?.name||'';
       const clock  = comp.status?.displayClock||'';
       const detail = comp.status?.type?.shortDetail||'';
-      scoreMap[k] = { team1:n1, team2:n2, s1:t1.score||'', s2:t2.score||'',
+      const entry = { team1:n1, team2:n2, s1:t1.score||'', s2:t2.score||'',
                       status, clock, detail,
                       isLive: status==='STATUS_IN_PROGRESS',
                       isDone: status==='STATUS_FINAL'||status==='STATUS_FULL_TIME'||detail==='FT' };
+      scoreMap[k] = entry;
+      /* also store in allEvents keyed by CEST date */
+      if (ev.date) {
+        const utc = new Date(ev.date);
+        const cest = new Date(utc.getTime() + 2*3600000);
+        const cestDate = cest.toISOString().slice(0,10);
+        const cestTime = cest.toISOString().slice(11,16);
+        const venue = comp.venue?.fullName || comp.venue?.address?.city || '';
+        const grpName = ev.season?.displayName || ev.name || '';
+        if (!allEvents[cestDate]) allEvents[cestDate] = [];
+        /* avoid duplicates on re-fetch */
+        if (!allEvents[cestDate].find(e=>e.key===k)) {
+          allEvents[cestDate].push({...entry, key:k, cestTime, venue,
+            flag1:flagByName(n1), flag2:flagByName(n2), evName:grpName});
+        }
+      }
     });
   } catch(e) {}
 }
@@ -373,7 +390,17 @@ async function fetchScoresForDate(dateStr) {
 /* ── Fetch all relevant dates ── */
 async function fetchAllScores() {
   const today = getCESTDate().replace(/-/g,'');
-  const allDates = [...new Set(FIXTURES.map(f=>f.espnDate))].filter(d=>d<=today);
+  /* group stage: Jun 10-27 (ESPN ET dates, one day buffer for late kickoffs) */
+  const groupDates = [];
+  for (let d = new Date('2026-06-10T00:00:00Z'); ; d.setUTCDate(d.getUTCDate()+1)) {
+    const s = d.toISOString().slice(0,10).replace(/-/g,'');
+    if (s > '20260627') break;
+    if (s <= today) groupDates.push(s);
+  }
+  /* knockout stage ESPN dates */
+  const knockoutDates = [...new Set(FIXTURES.map(f=>f.espnDate))].filter(d=>d<=today);
+  const allDates = [...new Set([...groupDates, ...knockoutDates])];
+  allEvents = {};
   await Promise.all(allDates.map(d=>fetchScoresForDate(d)));
   buildMatchResults();
 }
@@ -543,24 +570,92 @@ function renderThird() {
   document.getElementById('third').innerHTML=html;
 }
 
+/* ── Render a single fixture card (group stage event from allEvents) ── */
+function renderEventCard(ev) {
+  const isLive = ev.isLive, isDone = ev.isDone;
+  let centerHtml;
+  if (isDone || isLive) {
+    centerHtml = `<div class="fx-score" style="${isLive?'color:var(--red)':''}">${ev.s1}–${ev.s2}</div><div class="fx-round">${isLive?`LIVE ${ev.clock}`:'FT'}</div>`;
+  } else {
+    centerHtml = `<div class="fx-vs">vs</div><div class="fx-round">Group</div>`;
+  }
+  return `<div class="fixture ${isLive?'live-now':''} ${isDone?'fx-done':''}">
+    <div class="fx-head">
+      <span class="fx-time ${isLive?'is-live':''}">🕐 ${ev.cestTime} CEST${isLive?`<span class="live-badge">LIVE ${ev.clock||''}</span>`:''}</span>
+      <span class="fx-meta">${ev.venue||''}</span>
+    </div>
+    <div class="fx-body">
+      <div class="fx-team"><span class="fx-flag">${ev.flag1}</span><span class="fx-name">${ev.team1}</span></div>
+      <div class="fx-center">${centerHtml}</div>
+      <div class="fx-team"><span class="fx-flag">${ev.flag2}</span><span class="fx-name">${ev.team2}</span></div>
+    </div>
+  </div>`;
+}
+
+/* ── Render a knockout fixture card ── */
+function renderFixtureCard(f) {
+  const r1 = resolveSlot(f.slot1), r2 = resolveSlot(f.slot2);
+  const k = scoreKey(r1.name||'', r2.name||'');
+  const sc = scoreMap[k];
+  const isLive = sc?.isLive, isDone = sc?.isDone;
+  let centerHtml;
+  if (isDone || isLive) {
+    const s1 = sc.team1===r1.name ? sc.s1 : sc.s2;
+    const s2 = sc.team1===r1.name ? sc.s2 : sc.s1;
+    centerHtml = `<div class="fx-score" style="${isLive?'color:var(--red)':''}">${s1}–${s2}</div><div class="fx-round">${isLive?`LIVE ${sc.clock}`:'FT'}</div>`;
+  } else {
+    centerHtml = `<div class="fx-vs">vs</div><div class="fx-round">${f.round}</div>`;
+  }
+  const n1cls = r1.proj?'proj':(!r1.name||r1.name.startsWith('W ')||r1.name.startsWith('Best'))?'tbd-name':'';
+  const n2cls = r2.proj?'proj':(!r2.name||r2.name.startsWith('W ')||r2.name.startsWith('Best'))?'tbd-name':'';
+  return `<div class="fixture ${isLive?'live-now':''} ${isDone?'fx-done':''}">
+    <div class="fx-head">
+      <span class="fx-time ${isLive?'is-live':''}">🕐 ${f.cest} CEST${isLive?`<span class="live-badge">LIVE ${sc?.clock||''}</span>`:''}</span>
+      <span class="fx-meta">${f.id} · ${f.venue}</span>
+    </div>
+    <div class="fx-body">
+      <div class="fx-team"><span class="fx-flag">${r1.flag}</span><span class="fx-name ${n1cls}">${r1.name||'TBD'}</span></div>
+      <div class="fx-center">${centerHtml}</div>
+      <div class="fx-team"><span class="fx-flag">${r2.flag}</span><span class="fx-name ${n2cls}">${r2.name||'TBD'}</span></div>
+    </div>
+  </div>`;
+}
+
 /* ══════════════════════════════
    RENDER: GAMES
 ══════════════════════════════ */
 function renderGames() {
   const todayStr = getCESTDate();
-  const todayFixtures = FIXTURES.filter(f => f.cestDate === todayStr);
 
-  /* ── Today banner ── */
+  /* ── Collect all unique dates (group stage from allEvents + knockout from FIXTURES) ── */
+  const gsDateSet = new Set(Object.keys(allEvents).filter(d => d >= '2026-06-11' && d <= '2026-06-27'));
+  const koDateSet = new Set(FIXTURES.map(f => f.cestDate));
+  const allDates  = [...new Set([...gsDateSet, ...koDateSet])].sort();
+
+  /* ── Today banner: show today's matches (group or knockout) ── */
   let todayHtml = '';
-  if (todayFixtures.length === 0) {
+  const todayGS = allEvents[todayStr] || [];
+  const todayKO = FIXTURES.filter(f => f.cestDate === todayStr);
+
+  if (todayGS.length === 0 && todayKO.length === 0) {
     todayHtml = `<div class="today-no-games">No matches today</div>`;
   } else {
-    todayFixtures.forEach(f => {
+    /* group stage today */
+    todayGS.sort((a,b) => a.cestTime.localeCompare(b.cestTime)).forEach(ev => {
+      const isLive = ev.isLive, isDone = ev.isDone;
+      let scoreHtml = isDone||isLive ? `<span class="tc-score">${ev.s1}–${ev.s2}</span>` : `<span class="tc-vs">vs</span>`;
+      todayHtml += `<div class="tc ${isLive?'live-now':''}">
+        <div class="tc-time">🕐 ${ev.cestTime}${isLive?` <span class="tc-live-badge">LIVE ${ev.clock||''}</span>`:isDone?' <span style="color:var(--faint);font-size:9px">FT</span>':''}</div>
+        <div class="tc-flags"><span class="tc-flag">${ev.flag1}</span>${scoreHtml}<span class="tc-flag">${ev.flag2}</span></div>
+        <div class="tc-names"><span class="tc-name">${ev.team1}</span><span class="tc-name">${ev.team2}</span></div>
+        <div class="tc-meta">Group · ${ev.venue?.split(',')[0]||''}</div>
+      </div>`;
+    });
+    /* knockout today */
+    todayKO.forEach(f => {
       const r1 = resolveSlot(f.slot1), r2 = resolveSlot(f.slot2);
-      const k = scoreKey(r1.name||'', r2.name||'');
-      const sc = scoreMap[k];
-      const isLive = sc?.isLive;
-      const isDone = sc?.isDone;
+      const sc = scoreMap[scoreKey(r1.name||'', r2.name||'')];
+      const isLive = sc?.isLive, isDone = sc?.isDone;
       let scoreHtml;
       if (isDone||isLive) {
         const s1 = sc.team1===r1.name ? sc.s1 : sc.s2;
@@ -578,55 +673,23 @@ function renderGames() {
     });
   }
 
-  /* ── Group by CEST date ── */
-  const byDate = {};
-  FIXTURES.forEach(f => {
-    if (!byDate[f.cestDate]) byDate[f.cestDate] = [];
-    byDate[f.cestDate].push(f);
-  });
-
+  /* ── Full fixture list ── */
   let listHtml = '';
-  Object.keys(byDate).sort().forEach(date => {
-    const fxs = byDate[date];
+  allDates.forEach(date => {
     const isToday = date === todayStr;
     const isPast  = date < todayStr;
+    const gsEvs = (allEvents[date] || []).sort((a,b) => a.cestTime.localeCompare(b.cestTime));
+    const koFxs = FIXTURES.filter(f => f.cestDate === date).sort((a,b) => a.cest.localeCompare(b.cest));
+    const total  = gsEvs.length + koFxs.length;
+    if (total === 0) return;
+
     listHtml += `<div class="day-header">
       <span class="day-label ${isToday?'today-label':''}">${fmtDate(date)}${isToday?' · Today':isPast?' · Past':' · Upcoming'}</span>
-      <span class="day-count">${fxs.length} match${fxs.length>1?'es':''}</span>
+      <span class="day-count">${total} match${total>1?'es':''}</span>
       <span class="day-sep"></span>
     </div>`;
-
-    fxs.forEach(f => {
-      const r1 = resolveSlot(f.slot1), r2 = resolveSlot(f.slot2);
-      const k = scoreKey(r1.name||'', r2.name||'');
-      const sc = scoreMap[k];
-      const isLive = sc?.isLive;
-      const isDone = sc?.isDone;
-
-      let centerHtml;
-      if (isDone || isLive) {
-        const s1 = sc.team1===r1.name ? sc.s1 : sc.s2;
-        const s2 = sc.team1===r1.name ? sc.s2 : sc.s1;
-        centerHtml = `<div class="fx-score" style="${isLive?'color:var(--red)':''}">${s1}–${s2}</div><div class="fx-round">${isLive?`LIVE ${sc.clock}`:'FT'}</div>`;
-      } else {
-        centerHtml = `<div class="fx-vs">vs</div><div class="fx-round">${f.round}</div>`;
-      }
-
-      const n1cls = r1.proj?'proj':(!r1.name||r1.name.startsWith('W ')||r1.name.startsWith('Best'))?'tbd-name':'';
-      const n2cls = r2.proj?'proj':(!r2.name||r2.name.startsWith('W ')||r2.name.startsWith('Best'))?'tbd-name':'';
-
-      listHtml += `<div class="fixture ${isLive?'live-now':''} ${isDone?'fx-done':''}">
-        <div class="fx-head">
-          <span class="fx-time ${isLive?'is-live':''}">🕐 ${f.cest} CEST${isLive?`<span class="live-badge">LIVE ${sc?.clock||''}</span>`:''}</span>
-          <span class="fx-meta">${f.id} · ${f.venue}</span>
-        </div>
-        <div class="fx-body">
-          <div class="fx-team"><span class="fx-flag">${r1.flag}</span><span class="fx-name ${n1cls}">${r1.name||'TBD'}</span></div>
-          <div class="fx-center">${centerHtml}</div>
-          <div class="fx-team"><span class="fx-flag">${r2.flag}</span><span class="fx-name ${n2cls}">${r2.name||'TBD'}</span></div>
-        </div>
-      </div>`;
-    });
+    gsEvs.forEach(ev => { listHtml += renderEventCard(ev); });
+    koFxs.forEach(f  => { listHtml += renderFixtureCard(f); });
   });
 
   document.getElementById('games').innerHTML = `
