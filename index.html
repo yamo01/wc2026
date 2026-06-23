@@ -450,14 +450,15 @@ async function fetchScoresForDate(dateStr) {
       const n1=t1.team.displayName,n2=t2.team.displayName;
       const k=scoreKey(n1,n2);
       const s1=t1.score??'',s2=t2.score??'';
-      const hasScore=s1!==''&&s2!=='';
       const status=comp.status?.type?.name||'';
       const clock=comp.status?.displayClock||'';
       const detail=comp.status?.type?.shortDetail||'';
+      const isScheduled=status.includes('SCHEDULED')||status.includes('PREGAME')||status==='';
+      const isLive=status.includes('IN_PROGRESS')||status.includes('HALFTIME');
+      const isDoneSt=status.includes('FINAL')||status.includes('FULL')||detail==='FT'||detail==='Full Time';
+      const hasScore=!isScheduled&&s1!==''&&s2!==''&&(isLive||isDoneSt);
       const entry={team1:n1,team2:n2,s1,s2,status,clock,detail,
-                   isLive:status.includes('IN_PROGRESS')||status.includes('HALFTIME'),
-                   isDone:hasScore&&(status.includes('FINAL')||status.includes('FULL')||detail==='FT'||detail==='Full Time'),
-                   hasScore};
+                   isLive, isDone:hasScore&&isDoneSt, hasScore};
       scoreMap[k]=entry;
       if(ev.date){
         const utc=new Date(ev.date);
@@ -478,8 +479,8 @@ async function fetchAllScores() {
   const groupDates=[];
   for(let d=new Date('2026-06-10T00:00:00Z');;d.setUTCDate(d.getUTCDate()+1)){
     const s=d.toISOString().slice(0,10).replace(/-/g,'');
-    if(s>'20260627') break;
-    if(s<=today) groupDates.push(s);
+    if(s>'20260628') break;
+    groupDates.push(s); /* fetch all group stage dates incl. future — ESPN returns scheduled matches */
   }
   const koDates=[...new Set(FIXTURES.map(f=>f.espnDate))].filter(d=>d<=today);
   allEvents={};
