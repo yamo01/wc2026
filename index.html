@@ -363,10 +363,13 @@ async function fetchScoresForDate(dateStr) {
       const status = comp.status?.type?.name||'';
       const clock  = comp.status?.displayClock||'';
       const detail = comp.status?.type?.shortDetail||'';
-      const entry = { team1:n1, team2:n2, s1:t1.score||'', s2:t2.score||'',
+      const s1 = t1.score ?? '', s2 = t2.score ?? '';
+      const hasScore = s1!=='' && s2!=='';
+      const entry = { team1:n1, team2:n2, s1, s2,
                       status, clock, detail,
-                      isLive: status==='STATUS_IN_PROGRESS',
-                      isDone: status==='STATUS_FINAL'||status==='STATUS_FULL_TIME'||detail==='FT' };
+                      isLive: status.includes('IN_PROGRESS')||status.includes('HALFTIME'),
+                      isDone: hasScore && (status.includes('FINAL')||status.includes('FULL')||detail==='FT'||detail==='Full Time'),
+                      hasScore };
       scoreMap[k] = entry;
       /* also store in allEvents keyed by CEST date */
       if (ev.date) {
@@ -572,10 +575,11 @@ function renderThird() {
 
 /* ── Render a single fixture card (group stage event from allEvents) ── */
 function renderEventCard(ev) {
-  const isLive = ev.isLive, isDone = ev.isDone;
+  const isLive = ev.isLive, isDone = ev.isDone, hasScore = ev.hasScore;
   let centerHtml;
-  if (isDone || isLive) {
-    centerHtml = `<div class="fx-score" style="${isLive?'color:var(--red)':''}">${ev.s1}–${ev.s2}</div><div class="fx-round">${isLive?`LIVE ${ev.clock}`:'FT'}</div>`;
+  if (hasScore || isLive) {
+    const label = isLive ? `LIVE ${ev.clock}` : isDone ? 'FT' : ev.clock||'';
+    centerHtml = `<div class="fx-score" style="${isLive?'color:var(--red)':''}">${ev.s1}–${ev.s2}</div><div class="fx-round">${label}</div>`;
   } else {
     centerHtml = `<div class="fx-vs">vs</div><div class="fx-round">Group</div>`;
   }
@@ -597,12 +601,13 @@ function renderFixtureCard(f) {
   const r1 = resolveSlot(f.slot1), r2 = resolveSlot(f.slot2);
   const k = scoreKey(r1.name||'', r2.name||'');
   const sc = scoreMap[k];
-  const isLive = sc?.isLive, isDone = sc?.isDone;
+  const isLive = sc?.isLive, isDone = sc?.isDone, hasScore = sc?.hasScore;
   let centerHtml;
-  if (isDone || isLive) {
+  if (sc && (hasScore || isLive)) {
     const s1 = sc.team1===r1.name ? sc.s1 : sc.s2;
     const s2 = sc.team1===r1.name ? sc.s2 : sc.s1;
-    centerHtml = `<div class="fx-score" style="${isLive?'color:var(--red)':''}">${s1}–${s2}</div><div class="fx-round">${isLive?`LIVE ${sc.clock}`:'FT'}</div>`;
+    const label = isLive ? `LIVE ${sc.clock}` : isDone ? 'FT' : sc.clock||'';
+    centerHtml = `<div class="fx-score" style="${isLive?'color:var(--red)':''}">${s1}–${s2}</div><div class="fx-round">${label}</div>`;
   } else {
     centerHtml = `<div class="fx-vs">vs</div><div class="fx-round">${f.round}</div>`;
   }
@@ -642,8 +647,8 @@ function renderGames() {
   } else {
     /* group stage today */
     todayGS.sort((a,b) => a.cestTime.localeCompare(b.cestTime)).forEach(ev => {
-      const isLive = ev.isLive, isDone = ev.isDone;
-      let scoreHtml = isDone||isLive ? `<span class="tc-score">${ev.s1}–${ev.s2}</span>` : `<span class="tc-vs">vs</span>`;
+      const isLive = ev.isLive, isDone = ev.isDone, hasScore = ev.hasScore;
+      let scoreHtml = (hasScore||isLive) ? `<span class="tc-score">${ev.s1}–${ev.s2}</span>` : `<span class="tc-vs">vs</span>`;
       todayHtml += `<div class="tc ${isLive?'live-now':''}">
         <div class="tc-time">🕐 ${ev.cestTime}${isLive?` <span class="tc-live-badge">LIVE ${ev.clock||''}</span>`:isDone?' <span style="color:var(--faint);font-size:9px">FT</span>':''}</div>
         <div class="tc-flags"><span class="tc-flag">${ev.flag1}</span>${scoreHtml}<span class="tc-flag">${ev.flag2}</span></div>
@@ -655,9 +660,9 @@ function renderGames() {
     todayKO.forEach(f => {
       const r1 = resolveSlot(f.slot1), r2 = resolveSlot(f.slot2);
       const sc = scoreMap[scoreKey(r1.name||'', r2.name||'')];
-      const isLive = sc?.isLive, isDone = sc?.isDone;
+      const isLive = sc?.isLive, isDone = sc?.isDone, hasScore = sc?.hasScore;
       let scoreHtml;
-      if (isDone||isLive) {
+      if (sc && (hasScore||isLive)) {
         const s1 = sc.team1===r1.name ? sc.s1 : sc.s2;
         const s2 = sc.team1===r1.name ? sc.s2 : sc.s1;
         scoreHtml = `<span class="tc-score">${s1}–${s2}</span>`;
