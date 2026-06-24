@@ -736,25 +736,26 @@ function renderGames() {
     }
   });
 
-  const playedOpen   = document.getElementById('games-played-body')?.style.display !== 'none';
-  const upcomingOpen = document.getElementById('games-upcoming-body')?.style.display === 'none' ? false : true;
+  /* preserve open/close state across refreshes */
+  const playedOpen   = document.getElementById('games-played-body')   ? document.getElementById('games-played-body').style.display   !== 'none' : true;
+  const upcomingOpen = document.getElementById('games-upcoming-body') ? document.getElementById('games-upcoming-body').style.display !== 'none' : true;
 
   document.getElementById('games').innerHTML=`
     <div class="section-hdr" onclick="toggleSection('games-played')">
       <span class="section-title" style="color:var(--muted)">Played</span>
       <span class="section-count">${playedCount} matches</span>
       <span class="section-sep"></span>
-      <span class="section-chev" id="games-played-chev">▸</span>
+      <span class="section-chev" id="games-played-chev">${playedOpen?'▾':'▸'}</span>
     </div>
-    <div id="games-played-body" style="display:none">${playedHtml||'<div style="color:var(--faint);font-size:12px;padding:4px 2px 8px">No completed matches yet</div>'}</div>
+    <div id="games-played-body" style="${playedOpen?'':'display:none'}">${playedHtml||'<div style="color:var(--faint);font-size:12px;padding:4px 2px 8px">No completed matches yet</div>'}</div>
 
     <div class="section-hdr" onclick="toggleSection('games-upcoming')">
       <span class="section-title" style="color:var(--text)">Upcoming</span>
       <span class="section-count">${upcomingCount} matches</span>
       <span class="section-sep"></span>
-      <span class="section-chev" id="games-upcoming-chev">▾</span>
+      <span class="section-chev" id="games-upcoming-chev">${upcomingOpen?'▾':'▸'}</span>
     </div>
-    <div id="games-upcoming-body">${upcomingHtml||'<div style="color:var(--faint);font-size:12px;padding:4px 2px 8px">No upcoming matches</div>'}</div>`;
+    <div id="games-upcoming-body" style="${upcomingOpen?'':'display:none'}">${upcomingHtml||'<div style="color:var(--faint);font-size:12px;padding:4px 2px 8px">No upcoming matches</div>'}</div>`;
 }
 
 function toggleSection(id) {
